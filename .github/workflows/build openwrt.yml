@@ -1,0 +1,126 @@
+name: WR703N Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        path: config-repo
+
+    - name: Cache OpenWrt
+      uses: actions/cache@v3
+      id: openwrt-cache
+      with:
+        path: |
+          openwrt/dl       # 下载目录
+          openwrt/build_dir # 构建目录
+          ~/.ccache            # 编译缓存
+        key: ${{ runner.os }}-openwrt-${{ github.sha }}-${{ hashFiles('openwrt/scripts/feeds') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-
+
+    - name: Clone OpenWrt
+      run: |
+        git clone --branch master  https://github.com/coolsnowwolf/lede openwrt
+
+    - name: Install Build Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext \
+          genisoimage git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev \
+          libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev \
+          libreadline-dev libssl-dev libtool llvm lrzsz msmtp ninja-build p7zip p7zip-full patch pkgconf \
+          python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
+          swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+
+    - name: Setup Python
+      run: |
+        python3 -m venv ~/venv
+        source ~/venv/bin/activate
+
+    - name: Apply Patches
+      run: |
+        cd openwrt
+        sed -i '227s/4mlzma/16mlzma/g' target/linux/ath79/image/tiny-tp-link.mk
+        cat target/linux/ath79/image/tiny-tp-link.mk
+        
+        sed -i '67s/0x3d0000/0xfd0000/g' target/linux/ath79/dts/ar9331_tplink_tl-wr703n_tl-mr10u.dtsi
+        sed -i '72s/0x3f0000/0xff0000/g' target/linux/ath79/dts/ar9331_tplink_tl-wr703n_tl-mr10u.dtsi
+        cat target/linux/ath79/dts/ar9331_tplink_tl-wr703n_tl-mr10u.dtsi
+        
+        
+        # 更新并应用补丁
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        
+        # 复制配置文件
+        cp -r ../config-repo/files files
+        find files/etc/config -type d -exec chmod 0755 {} \;
+        find files/etc/config -type f -exec chmod 0644 {} \;
+        cp ../config-repo/.config .
+
+    - name: Build Firmware
+      run: |
+        set -euxo pipefail
+        cd openwrt
+        source ~/venv/bin/activate
+        
+        make defconfig
+        sed -i 's/CONFIG_INITRAMFS_COMPRESSION_LZ4=y/# CONFIG_INITRAMFS_COMPRESSION_LZ4 is not set/' .config
+        sed -i 's/CONFIG_RD_LZ4=y/# CONFIG_RD_LZ4 is not set/' .config
+        sed -i 's/CONFIG_INITRAMFS_COMPRESSION_ZSTD=y/# CONFIG_INITRAMFS_COMPRESSION_ZSTD is not set/' .config
+        sed -i 's/CONFIG_RD_ZSTD=y/# CONFIG_RD_ZSTD is not set/' .config
+        
+        make V=s -j1
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-firmware
+        path: openwrt/bin/targets/ath79/tiny/openwrt-ath79-*.bin
+
+    - name: Get release metadata
+      id: metadata
+      run: |
+        echo "DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+        echo "TIME=$(date +'%H%M')" >> $GITHUB_OUTPUT
+        echo "SHA_SHORT=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        
+        # 获取提交信息（仅push事件）
+        if [ "${{ github.event_name }}" = "push" ]; then
+          echo "COMMITS=$(git log --pretty=format:'- %s (%%h)' ${{ github.event.before }}..${{ github.sha }} | sed 's/%/%%/g')" >> $GITHUB_OUTPUT
+        else
+          echo "COMMITS=Manual workflow dispatch" >> $GITHUB_OUTPUT
+        fi
+
+    # 新增步骤：发布到GitHub Release
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      if: github.ref == 'refs/heads/main' && success()
+      with:
+        tag_name: release-${{ steps.metadata.outputs.DATE }}-${{ steps.metadata.outputs.TIME }}
+        name: WR802N-v1 (${{ steps.metadata.outputs.DATE }})
+        body: | 
+          ### 构建信息
+          - 提交哈希: [${{ steps.metadata.outputs.SHA_SHORT }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          - 构建时间: ${{ steps.metadata.outputs.DATE }} ${{ steps.metadata.outputs.TIME }}
+
+          ### 更新内容
+          ${{ steps.metadata.outputs.COMMITS }}
+        files: |
+          openwrt/bin/targets/ath79/tiny/openwrt-ath79-*.bin
+        draft: false
+        prerelease: false
