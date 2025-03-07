@@ -26,8 +26,9 @@ jobs:
           openwrt/dl       # 下载目录
           openwrt/build_dir # 构建目录
           ~/.ccache            # 编译缓存
-        key: ${{ runner.os }}-openwrt-${{ github.sha }}-${{ hashFiles('openwrt/scripts/feeds') }}
+        key: ${{ runner.os }}-openwrt-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
+          ${{ runner.os }}-openwrt-${{ github.ref }}-
           ${{ runner.os }}-openwrt-
 
     - name: Clone OpenWrt
