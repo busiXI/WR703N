@@ -113,7 +113,7 @@ jobs:
       if: github.ref == 'refs/heads/main' && success()
       with:
         tag_name: release-${{ steps.metadata.outputs.DATE }}-${{ steps.metadata.outputs.TIME }}
-        name: WR802N-v1 (${{ steps.metadata.outputs.DATE }})
+        name: WR703N (${{ steps.metadata.outputs.DATE }})
         body: | 
           ### 构建信息
           - 提交哈希: [${{ steps.metadata.outputs.SHA_SHORT }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
